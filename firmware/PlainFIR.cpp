@@ -1,85 +1,227 @@
-#include "PlainFIR.h"
+#include "FilterOnePole.h"
+#include "FloatDefine.h"
 
-PlainFIR::PlainFIR(void) 
-{
-/* Constructor */
+FilterOnePole::FilterOnePole( FILTER_TYPE ft, float fc, float initialValue ) {
+  setFilter( ft, fc, initialValue );
 }
 
-PlainFIR::~PlainFIR(void)
-{ 
-/* Destructor */
+void FilterOnePole::setFilter( FILTER_TYPE ft, float fc, float initialValue ) {
+  FT = ft;
+  setFrequency( fc );
+
+  Y = initialValue;
+  Ylast = initialValue;
+  X = initialValue;
+
+  LastUS = micros();
+}
+
+float FilterOnePole::input( float inVal ) {
+  long time = micros();
+  ElapsedUS = float(time - LastUS);   // cast to float here, for math
+  LastUS = time;                      // update this now
+
+  // shift the data values
+  Ylast = Y;
+  X = inVal;                          // this is now the most recent input value
+  
+  // filter value is controlled by a parameter called X
+  // tau is set by the user in microseconds, but must be converted to samples here
+  TauSamps = TauUS / ElapsedUS;
+  
+  float ampFactor;
+#ifdef ARM_FLOAT
+  ampFactor = expf( -1.0 / TauSamps );     // this is 1 if called quickly
+#else
+  ampFactor = exp( -1.0 / TauSamps );      // this is 1 if called quickly
+#endif
+  
+  Y = (1.0-ampFactor)*X + ampFactor*Ylast;     // set the new value
+
+  return output();
+}
+
+void FilterOnePole::setFrequency( float newFrequency ) {
+  setTau( 1.0/(TWO_PI*newFrequency ) ); // τ=1/ω
+}
+
+void FilterOnePole::setTau( float newTau ) {
+  TauUS = newTau * 1e6;
+}
+
+float FilterOnePole::output() {
+    // figure out which button to read
+  switch (FT) {
+    case LOWPASS:         
+      // return the last value
+      return Y; 
+      break;
+    case INTEGRATOR:      
+      // using a lowpass, but normaize
+      return Y * (TauUS/1.0e6);
+      break;
+    case HIGHPASS:       
+      // highpass is the _difference_
+      return X-Y;
+      break;
+    case DIFFERENTIATOR:
+      // like a highpass, but normalize
+      return (X-Y)/(TauUS/1.0e6);
+      break;
+    default:
+      // should never get to here, return 0 just in case
+      return 0;
+  }
+}
+
+void FilterOnePole::print() {
+  Serial.println("");
+  Serial.print(" Y: ");        Serial.print( Y );
+  Serial.print(" Ylast: ");      Serial.print( Ylast );
+  Serial.print(" X ");         Serial.print( X );
+  Serial.print(" ElapsedUS ");  Serial.print( ElapsedUS );
+  Serial.print(" TauSamps: ");  Serial.print( TauSamps );
+  //Serial.print(" ampFactor " );       Serial.print( ampFactor );
+  Serial.print(" TauUS: ");     Serial.print( TauUS );
+  Serial.println("");
+}
+
+void FilterOnePole::test() {
+  float tau = 10;
+  float updateInterval = 1;
+  float nextupdateTime = millis()*1e-3;
+
+  float inputValue = 0;
+  FilterOnePole hp( HIGHPASS, tau, inputValue );
+  FilterOnePole lp( LOWPASS, tau, inputValue );
+
+  while( true ) {
+    float now = millis()*1e-3;
+
+    // switch input values on a 20 second cycle
+    if( round(now/20.0)-(now/20.0) < 0 )
+    inputValue = 0;
+    else
+    inputValue = 100;
+
+    hp.input(inputValue);
+    lp.input(inputValue);
+
+    if( now > nextupdateTime ) {
+      nextupdateTime += updateInterval;
+
+      Serial.print("inputValue: "); Serial.print( inputValue );
+      Serial.print("\t high-passed: "); Serial.print( hp.output() );
+      Serial.print("\t low-passed: "); Serial.print( lp.output() );
+      Serial.println();
+    }
+  }
+}
+
+void FilterOnePole::setToNewValue( float newVal ) {
+  Y = Ylast = X = newVal;
 }
 
 
+// stuff for filter2 (lowpass only)
+// should be able to set a separate fall time as well
+FilterOnePoleCascade::FilterOnePoleCascade( float riseTime, float initialValue ) {
+  setRiseTime( riseTime );
+  setToNewValue( initialValue );
+}
 
-double * PlainFIR::SetFilter(uint8_t filterType, uint16_t order, uint16_t samplingFrequency, uint8_t windowType, uint16_t transition1, uint16_t transition2) 
-/* Order shall be an even number in order to simplify the code */
-{
-      uint16_t _order  = order;
-	uint16_t taps = order + 1;
-      double * _vFilter = (double *)malloc(taps * sizeof(double)); /* allocate memory for n taps buffer */
-	double normTransFreq1 = transition1 / samplingFrequency;
-	double normTransFreq2 = transition2 / samplingFrequency;
-	/* Compute half + 1 weighing factors, because the filter is symetric */
-	for (uint16_t n = 0; n < (order >> 1) + 1; n++) {
-		double a = M_PI * (n - (order >> 1));
-		double weigthingFactor;
-		/* Compute weighing factor */
-		switch(filterType){
-		case FIR_FIL_TYP_LOW_PASS:
-			if (n != (order >> 1)) {
-				weigthingFactor = sin(2.0 * normTransFreq1 * a) / a;
-			}
-			else {
-				weigthingFactor = 2.0 * normTransFreq1;
-			}
-			break;		
-		case FIR_FIL_TYP_HIG_PASS:
-			if (n != (order >> 1)) {
-				weigthingFactor = - sin(2.0 * normTransFreq1 * a) / a;
-			}
-			else {
-				weigthingFactor = 1.0 - (2.0 * normTransFreq1);
-			}
-			break;		
-		case FIR_FIL_TYP_BAN_PASS:
-			if (n != (order >> 1)) {
-				weigthingFactor = (sin(2.0 * normTransFreq2 * a) - sin(2.0 * normTransFreq1 * a)) / a;
-			}
-			else {
-				weigthingFactor = 2.0 * (normTransFreq2 - normTransFreq1);
-			}
-			break;		
-		case FIR_FIL_TYP_BAN_STOP:
-			if (n != (order >> 1)) {
-				weigthingFactor = (sin(2.0 * normTransFreq1 * a) - sin(2.0 * normTransFreq2 * a)) / a;
-			}
-			else {
-				weigthingFactor = 1.0 - (2.0 * (normTransFreq2 - normTransFreq1));
-			}
-			break;			
-		};
-		/* Apply windowing */
-		switch(windowType){
-		case FIR_WIN_TYP_BARLETT:
-			weigthingFactor *= 1.0 - ((2.0 * abs(n - (order >> 1))) / order);
-			break;
-		case FIR_WIN_TYP_BLACKMAN:
-			weigthingFactor *= 0.42 - (0.5 * cos((2.0 * M_PI * n) / order)) + (0.08 * cos((4.0 * M_PI * n) / order));
-			break;
-		case FIR_WIN_TYP_RECTANGLE:
-			weigthingFactor *= 1.0;
-			break;
-		case FIR_WIN_TYP_HAMMING:
-			weigthingFactor *= 0.5 - (0.46 * cos((2.0 * M_PI * n) / order));
-			break;
-		case FIR_WIN_TYP_HANN:
-			weigthingFactor *= 0.5 - (0.5 * cos((2.0 * M_PI * n) / order));
-			break;
-		};
-		/* Record weighing factors in filter vector */
-		_vFilter[n] = weigthingFactor;
-		_vFilter[taps - (n +1)] = weigthingFactor;
-	}
-	return(_vFilter)//////////prosthiki
-};
+void FilterOnePoleCascade::setRiseTime( float riseTime ) {
+  float tauScale = 3.36;      // found emperically, by running test();
+
+  Pole1.setTau( riseTime / tauScale );
+  Pole2.setTau( riseTime / tauScale );
+}
+
+float FilterOnePoleCascade::input( float inVal  ) {
+  Pole2.input( Pole1.input( inVal ));
+  return output();
+}
+
+// clears out the values in the filter
+void FilterOnePoleCascade::setToNewValue( float newVal ) {
+  Pole1.setToNewValue( newVal );
+  Pole2.setToNewValue( newVal );
+}
+
+float FilterOnePoleCascade::output() {
+  return Pole2.output();
+}
+
+void FilterOnePoleCascade::test() {
+  // make a filter, how fast does it run:
+  
+  float rise = 1.0;
+  FilterOnePoleCascade myFilter( rise );
+  
+  // first, test the filter speed ...
+  long nLoops = 1000;
+  
+  Serial.print( "testing filter with a rise time of ");
+  Serial.print( rise ); Serial.print( "s" );
+  
+  Serial.print( "\n running filter speed loop ... ");
+  
+  float startTime, stopTime;
+  
+  startTime = millis()*1e-3;
+  for( long i=0; i<nLoops; ++i ) {
+    myFilter.input( PI );   // use pi, so it will actually do a full calculation
+  }
+  stopTime = millis()*1e-3;
+  
+  Serial.print( "done, filter runs at " );
+  Serial.print( float(nLoops) / (stopTime - startTime) );
+  Serial.print( " hz " );
+  Serial.print( "\n filter value: " ); Serial.print( myFilter.output() );
+
+  myFilter.setToNewValue( 0.0 );
+  Serial.print( "\n after reset to 0: "); Serial.print( myFilter.output() );
+  
+  Serial.print( "\n testing rise time (10% to 90%) ...");
+  
+  bool crossedTenPercent = false;
+  while( myFilter.output() < 0.9 ) {
+    myFilter.input( 1.0 );
+    if( myFilter.output() > 0.1 && !crossedTenPercent ) {
+      // filter first crossed the 10% point
+      startTime = millis()*1e-3;
+      crossedTenPercent = true;
+    }
+  }
+  stopTime = millis()*1e-3;
+  
+  Serial.print( "done, rise time: " ); Serial.print( stopTime-startTime );
+  
+  Serial.print( "testing attenuation at f = 1/risetime" );
+  
+  myFilter.setToNewValue( 0.0 );
+  
+  float maxVal = 0;
+  float valWasOutputThisCycle = true;
+  
+  float lastFilterVal = 0;
+  
+  while( true ) {
+    float now = 1e-3*millis();
+    
+    float currentFilterVal = myFilter.input( sin( TWO_PI*now) );
+
+    if( currentFilterVal < 0.0 ) {
+      if( !valWasOutputThisCycle ) {
+        // just crossed below zero, output the max
+        Serial.print( maxVal*100 ); Serial.print( " %\n" );
+        valWasOutputThisCycle = true;
+      }
+      
+    }
+    
+  }
+  
+    
+  
+}
