@@ -2,7 +2,7 @@
 #define FilterOnePole_h
 
 #include "application.h"
-
+#include <math.h>
 enum FILTER_TYPE {
   HIGHPASS,
   LOWPASS,
