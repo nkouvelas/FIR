@@ -1,54 +1,75 @@
-/*
+#ifndef FilterOnePole_h
+#define FilterOnePole_h
 
-	FFT libray
-	Copyright (C) 2010 Didier Longueville
+#include <Arduino.h>
 
-	This program is free software: you can redistribute it and/or modify
-	it under the terms of the GNU General Public License as published by
-	the Free Software Foundation, either version 3 of the License, or
-	(at your option) any later version.
+enum FILTER_TYPE {
+  HIGHPASS,
+  LOWPASS,
+  INTEGRATOR,
+  DIFFERENTIATOR
+};
 
-	This program is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-	GNU General Public License for more details.
+// the recursive filter class implements a recursive filter (low / pass / highpass
+// note that this must be updated in a loop, using the most recent acquired values and the time acquired
+//   Y = a0*X + a1*Xm1
+//              + b1*Ylast
+struct FilterOnePole {
+  FILTER_TYPE FT;
+  float TauUS;       // decay constant of the filter, in US
+  float TauSamps;    // tau, measued in samples (this changes, depending on how long between input()s
 
-	You should have received a copy of the GNU General Public License
-	along with this program.  If not, see <http://www.gnu.org/licenses/>.
-	
-*/
+  // filter values - these are public, but should not be set externally
+  float Y;       // most recent output value (gets computed on update)
+  float Ylast;   // prevous output value
 
-#ifndef PlainFIR_h /* Prevent loading library twice */
-#define PlainFIR_h
-#include "application.h"
-#include <math.h>
+  float X;      // most recent input value
 
+  // elapsed times are kept in long, and will wrap every
+  // 35 mins, 47 seconds ... however, the wrap does not matter,
+  // because the delta will still be correct (always positive and small)
+  float ElapsedUS;   // time since last update
+  long LastUS;       // last time measured
 
-/* Custom constants */
+  FilterOnePole( FILTER_TYPE ft=LOWPASS, float fc=1.0, float initialValue=0 );
+  
+  // sets or resets the parameters and state of the filter
+  void setFilter( FILTER_TYPE ft, float tauS, float initialValue );
 
-/* Windowing type */
-#define FIR_WIN_TYP_BARLETT 0x00
-#define FIR_WIN_TYP_BLACKMAN 0x01
-#define FIR_WIN_TYP_RECTANGLE 0x02 /* rectangle (Box car) */
-#define FIR_WIN_TYP_HAMMING 0x03 /* hamming */
-#define FIR_WIN_TYP_HANN 0x04 /* hann */
+  void setFrequency( float newFrequency );
+  
+  void setTau( float newTau );
 
-/*bands of frequerncies*/
-#define FIR_FIL_TYP_LOW_PASS 0x00
-#define FIR_FIL_TYP_HIG_PASS 0x01
-#define FIR_FIL_TYP_BAN_PASS 0x02
-#define FIR_FIL_TYP_BAN_STOP 0x03
+  float input( float inVal );
 
+  float output();
 
-class PlainFIR {
-	public:
+  void print();
 
-	/* Constructor */
-	PlainFIR(void);
-	/* Destructor */
-	~PlainFIR(void);
-	/* Functions */
-double * SetFilter(uint8_t filterType, uint16_t order, uint16_t samplingFrequency, uint8_t windowType, uint16_t transition1, uint16_t transition2);
-};////itan void
+  void test();
+  
+  void setToNewValue( float newVal );  // resets the filter to a new value
+};
+
+// two pole filter, these are very useful
+struct FilterOnePoleCascade {
+
+  FilterOnePole Pole1;
+  FilterOnePole Pole2;
+  
+  FilterOnePoleCascade( float riseTime=1.0, float initialValue=0 );  // rise time to step function, 10% to 90%
+  
+  // rise time is 10% to 90%, for a step input
+  void setRiseTime( float riseTime );
+  
+  void setToNewValue( float newVal );
+  
+  float input( float inVal );
+  
+  float output();
+  
+  void test();
+};
+
 
 #endif
